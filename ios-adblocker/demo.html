@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PopupKiller 動作確認</title>
+<style>
+  :root { color-scheme: light dark; --bg: #f6f6f8; --card: #fff; --text: #1c1c1e; --sub: #6e6e73; --ok: #1f9d55; --ng: #d93025; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #000; --card: #1c1c1e; --text: #f2f2f7; --sub: #98989f; } }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.6 -apple-system, system-ui, sans-serif; }
+  main { max-width: 560px; margin: 0 auto; padding: 20px 16px 160px; }
+  h1 { font-size: 22px; margin: 8px 0 4px; }
+  .sub { color: var(--sub); font-size: 14px; margin: 0 0 16px; }
+  #status { background: var(--card); border-radius: 16px; padding: 18px; font-size: 18px; font-weight: 600; text-align: center; }
+  #status.ok { color: var(--ok); } #status.ng { color: var(--ng); }
+  #detail { margin-top: 10px; font-size: 14px; font-weight: 400; color: var(--sub); text-align: left; }
+  #detail li { margin: 2px 0; }
+  .fake-ad { background: #ff3b30; color: #fff; font-weight: 700; text-align: center; padding: 24px 8px; border-radius: 10px; margin: 16px 0; }
+  p.body { color: var(--sub); }
+</style>
+</head>
+<body>
+<main>
+  <h1>PopupKiller 動作確認ページ</h1>
+  <p class="sub">このページには、テスト用の「にせ広告」が仕込んであります。PopupKiller が動いていれば、赤い広告や画面を覆うポップアップはすぐ消えます。</p>
+
+  <div id="status">確認中…</div>
+
+  <p class="body">ここから下は普通の本文です。赤い「広告」の箱が見えていたら、ブロックされていません。</p>
+
+  <!-- にせ広告①：本文中の広告枠（AdSense と同じ形） -->
+  <ins class="adsbygoogle fake-ad" id="fake-ins" style="display:block" data-ad-client="ca-pub-test">広告①（本文中）：これが見えたらNG</ins>
+  <!-- にせ広告②：よくある広告枠 -->
+  <div class="ad-banner fake-ad" id="fake-banner">広告②（バナー）：これが見えたらNG</div>
+
+  <p class="body">本文です。本文です。本文です。本文です。本文です。本文です。本文です。本文です。本文です。本文です。本文です。本文です。本文です。本文です。</p>
+</main>
+
+<script>
+(function () {
+  var popupCount = 0;
+
+  // にせ広告③：何度消しても出てくるポップアップ
+  function popup() {
+    if (document.getElementById('fake-popup')) return;
+    var d = document.createElement('div');
+    d.id = 'fake-popup';
+    d.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:9999;display:flex;align-items:center;justify-content:center';
+    d.innerHTML = '<div style="background:#fff;color:#000;padding:24px;width:78%;border-radius:12px;text-align:center">' +
+      '<div class="fake-ad" style="margin:0 0 12px">広告③（ポップアップ）</div>' +
+      '<a href="https://shop.example.net/sale"><img alt="" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" width="120" height="60"></a><br>' +
+      '<button>×</button></div>';
+    document.body.appendChild(d);
+    document.documentElement.style.overflow = 'hidden';
+    popupCount++;
+  }
+  setTimeout(popup, 300);
+  setInterval(popup, 1000);
+
+  // にせ広告④：画面の下に張り付く広告
+  setTimeout(function () {
+    var b = document.createElement('div');
+    b.id = 'fake-anchor';
+    b.style.cssText = 'position:fixed;left:0;right:0;bottom:0;height:64px;background:#ff3b30;z-index:100;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700';
+    b.innerHTML = '<iframe src="https://googleads.g.doubleclick.net/pagead/popupkiller-test" width="1" height="1" style="border:0"></iframe>広告④（下に張り付く）';
+    document.body.appendChild(b);
+  }, 200);
+
+  function visible(id) {
+    var el = document.getElementById(id);
+    if (!el || !el.isConnected) return false;
+    var cs = getComputedStyle(el);
+    return cs.display !== 'none' && cs.visibility !== 'hidden';
+  }
+
+  function check() {
+    var items = [
+      ['本文中の広告枠', !visible('fake-ins')],
+      ['バナー広告', !visible('fake-banner')],
+      ['何度も出るポップアップ（' + popupCount + '回出現）', !visible('fake-popup') && popupCount >= 2],
+      ['下に張り付く広告', !visible('fake-anchor')],
+      ['スクロール禁止の解除', getComputedStyle(document.documentElement).overflow !== 'hidden' || document.documentElement.classList.contains('pk-unlock')],
+    ];
+    var okCount = items.filter(function (i) { return i[1]; }).length;
+    var s = document.getElementById('status');
+    if (okCount === items.length) {
+      s.className = 'ok';
+      s.innerHTML = '✅ PopupKiller は動いています！';
+    } else if (okCount === 0) {
+      s.className = 'ng';
+      s.innerHTML = '❌ 動いていません';
+    } else {
+      s.className = 'ng';
+      s.innerHTML = '⚠️ 一部だけ動いています';
+    }
+    var html = '<ul>' + items.map(function (i) { return '<li>' + (i[1] ? '✅ ' : '❌ ') + i[0] + '</li>'; }).join('') + '</ul>';
+    if (okCount === 0) {
+      html += '確認すること：<br>・Safari の「ぁあ」→ Userscripts → PopupKiller と右上のスイッチがオンか<br>・設定 → アプリ → Safari → 機能拡張 → Userscripts で「ほかのウェブサイト」が「許可」か<br>・このページを再読み込みしてみる';
+    }
+    s.innerHTML += '<div id="detail">' + html + '</div>';
+  }
+  setTimeout(check, 3500);
+  setInterval(check, 3000);
+})();
+</script>
+</body>
+</html>

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PopupKiller（しつこい広告・ポップアップ消し）
 // @namespace    https://github.com/yu-kuriyama/kadai-microposts
-// @version      1.0.0
+// @version      1.1.0
 // @description  何回消しても出てくるポップアップ広告・画面を覆う広告・下に張り付く広告を自動で消し続けます。iPhone の Safari（Userscripts アプリ）用。
 // @author       yu-kuriyama
 // @match        *://*/*
@@ -151,6 +151,7 @@
           const tooFast = now - lastOpen < 1000;
           if ((abs && AD.test(abs.href)) || (cross && tooFast)) {
             console.info('[PopupKiller] window.open をブロック:', u);
+            try { window.dispatchEvent(new Event('popupkiller-blocked-open')); } catch (e) {}
             return null;
           }
           lastOpen = now;
@@ -166,6 +167,7 @@
     } catch (e) { /* ignore */ }
   }
   patchWindowOpen();
+  window.addEventListener('popupkiller-blocked-open', () => { blockedCount++; showToast(); });
 
   // ---------------------------------------------------------------------------
   // ユーザー操作の記録（自分でタップして開いたメニュー等は消さない）
@@ -429,11 +431,28 @@
     }
   }
 
+  // CSS で非表示にした広告枠も数える（数えないと「何も起きていない」ように見えるため）
+  const AD_SELECTOR_STR = AD_SELECTORS.join(',');
+  const counted = new WeakSet();
+  function countHiddenAds() {
+    let n = 0;
+    let hits;
+    try { hits = document.querySelectorAll(AD_SELECTOR_STR); } catch (e) { return false; }
+    for (const el of hits) {
+      if (counted.has(el)) continue;
+      counted.add(el);
+      if (el.parentElement && el.parentElement.closest(AD_SELECTOR_STR)) continue; // 入れ子は1件として数える
+      n++;
+    }
+    blockedCount += n;
+    return n > 0;
+  }
+
   function scan() {
     if (!document.body) return;
     ensureStyle();
     clearVignetteHash();
-    let changed = false;
+    let changed = countHiddenAds();
     for (const [x, y] of samplePoints()) {
       // 重なっている場合があるので同じ点を数回見る
       for (let i = 0; i < 4; i++) {
