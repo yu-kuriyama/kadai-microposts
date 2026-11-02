@@ -1,0 +1,39 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
+<title>広告だらけページ</title>
+<style>
+ body{margin:0;font-family:sans-serif} header{position:fixed;top:0;left:0;right:0;height:50px;background:#333;color:#fff;z-index:10}
+ article{padding:60px 16px 120px} p{line-height:1.8}
+</style></head><body>
+<header id="site-header"><nav><a href="/">ホーム</a> <a href="/news">ニュース</a> <a href="/about">このサイトについて</a> <a href="/contact">お問い合わせ</a></nav></header>
+<article>
+ <h1>記事タイトル</h1>
+ <p id="body-text">本文です。</p>
+ <div class="ad-box" id="inline-ad">インライン広告</div>
+ <ins class="adsbygoogle" id="ins-ad" style="display:block;height:100px" data-ad-client="ca-pub-x"></ins>
+</article>
+<script>
+ const p=document.getElementById('body-text'); p.textContent='本文です。'.repeat(400);
+ // 1) 何度消しても出てくるポップアップ（半透明の背景＋×ボタン、スクロール禁止）
+ function popup(){
+   if(document.getElementById('nag')) return;
+   const d=document.createElement('div'); d.id='nag';
+   d.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center';
+   d.innerHTML='<div style="background:#fff;padding:20px;width:80%"><a href="https://shop.example.net/sale"><img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" width=200 height=150></a><button class="x">×</button></div>';
+   document.body.appendChild(d); document.documentElement.style.overflow='hidden';
+   window.popupShown=(window.popupShown||0)+1;
+ }
+ setTimeout(popup,300); setInterval(popup,700);
+ // 2) 下に張り付く広告（広告ネットワークの iframe）
+ const b=document.createElement('div'); b.id='anchor';
+ b.style.cssText='position:fixed;left:0;right:0;bottom:0;height:60px;z-index:100;background:#eee';
+ b.innerHTML='<iframe src="https://googleads.g.doubleclick.net/pagead/ads?x=1" width="320" height="50"></iframe>';
+ setTimeout(()=>document.body.appendChild(b),200);
+ // 3) 透明な全画面リンク（どこを触っても広告へ飛ぶ）
+ setTimeout(()=>{const a=document.createElement('a');a.id='clickjack';a.href='https://popads.net/x';
+   a.style.cssText='position:fixed;inset:0;z-index:99999;background:transparent';document.body.appendChild(a);},500);
+ // 4) アドブロック検出の壁（2秒後）
+ setTimeout(()=>{const w=document.createElement('div');w.id='adwall';
+   w.style.cssText='position:fixed;left:5%;top:15%;width:90%;height:60%;background:#fff;z-index:50000;border:1px solid #000';
+   w.innerHTML='<p>広告ブロッカーを無効にしてください</p><button>閉じる</button>';document.body.appendChild(w);
+   document.body.style.overflow='hidden';},1500);
+</script></body></html>

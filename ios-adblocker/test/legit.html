@@ -1,0 +1,20 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
+<title>普通のサイト</title>
+<style>
+ body{margin:0;font-family:sans-serif} header{position:sticky;top:40px;margin-top:40px;height:50px;background:#fff;border-bottom:1px solid #ccc;z-index:10}
+ .tabbar{position:fixed;left:0;right:0;bottom:0;height:56px;background:#fafafa;display:flex;justify-content:space-around;z-index:20}
+ article{padding:16px 16px 80px} #drawer{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000}
+ #drawer .panel{background:#fff;width:80%;height:100%;padding:16px}
+ #banner{position:fixed;top:0;left:0;right:0;height:40px;background:#ffc;z-index:30;}
+</style></head><body>
+<div id="banner" class="site-banner">本日は送料無料キャンペーン中です <a href="/campaign">詳しく</a></div>
+<header id="hdr"><button id="menu-btn">メニュー</button> サイト名</header>
+<article><h1>記事</h1><p id="t"></p><a href="https://twitter.com/share"><img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" width=20 height=20>シェア</a></article>
+<nav class="tabbar" id="tabbar"><a href="/">🏠 ホーム</a><a href="/search">🔍 検索</a><a href="/me">👤 マイページ</a></nav>
+<div id="drawer"><div class="panel"><a href="/a">カテゴリA</a><br><a href="/b">カテゴリB</a><br><button id="drawer-close">閉じる</button></div></div>
+<script>
+ document.getElementById('t').textContent='普通の本文。'.repeat(300);
+ document.getElementById('menu-btn').addEventListener('click',()=>{
+   setTimeout(()=>{document.getElementById('drawer').style.display='block';document.body.style.overflow='hidden';},150);
+ });
+</script></body></html>
