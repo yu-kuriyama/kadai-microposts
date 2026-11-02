@@ -1,0 +1,93 @@
+name: Safari動画保存アプリ
+
+on:
+  push:
+    paths:
+      - "safari-video-saver/**"
+      - ".github/workflows/safari-video-saver.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: safari-video-saver-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: safari-video-saver
+
+jobs:
+  # 署名なしでビルドが通るか確認する（設定なしでも動く）
+  build-check:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: XcodeGen をインストール
+        run: brew install xcodegen
+      - name: Xcode プロジェクトを生成
+        run: xcodegen generate
+      - name: ビルド（シミュレーター・署名なし）
+        run: |
+          set -o pipefail
+          xcodebuild -project VideoSaver.xcodeproj -scheme VideoSaver \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+            -configuration Debug CODE_SIGNING_ALLOWED=NO build | tail -n 80
+
+  # 署名して TestFlight にアップロードする（Secrets を設定したときだけ）
+  testflight:
+    needs: build-check
+    runs-on: macos-15
+    env:
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+      TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      BUNDLE_ID: ${{ secrets.BUNDLE_ID }}
+    steps:
+      - name: 設定の確認
+        id: check
+        working-directory: .
+        run: |
+          if [ -n "$ASC_KEY_ID" ] && [ -n "$ASC_ISSUER_ID" ] && [ -n "$ASC_KEY_P8" ] && [ -n "$TEAM_ID" ] && [ -n "$BUNDLE_ID" ]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::TestFlight 用の Secrets が未設定なのでアップロードはスキップします（README 参照）"
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.check.outputs.ok == 'true'
+      - name: 準備
+        if: steps.check.outputs.ok == 'true'
+        run: |
+          brew install xcodegen
+          xcodegen generate
+          mkdir -p "$RUNNER_TEMP/keys"
+          printf '%s' "$ASC_KEY_P8" > "$RUNNER_TEMP/keys/AuthKey_$ASC_KEY_ID.p8"
+      - name: アーカイブ（署名つきビルド）
+        if: steps.check.outputs.ok == 'true'
+        run: |
+          set -o pipefail
+          xcodebuild -project VideoSaver.xcodeproj -scheme VideoSaver \
+            -configuration Release -destination 'generic/platform=iOS' \
+            -archivePath build/VideoSaver.xcarchive archive \
+            DEVELOPMENT_TEAM="$TEAM_ID" BUNDLE_PREFIX="$BUNDLE_ID" \
+            CURRENT_PROJECT_VERSION="${{ github.run_number }}" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$RUNNER_TEMP/keys/AuthKey_$ASC_KEY_ID.p8" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" | tail -n 80
+      - name: TestFlight にアップロード
+        if: steps.check.outputs.ok == 'true'
+        run: |
+          set -o pipefail
+          /usr/libexec/PlistBuddy -c "Add :teamID string $TEAM_ID" ExportOptions.plist
+          xcodebuild -exportArchive -archivePath build/VideoSaver.xcarchive \
+            -exportOptionsPlist ExportOptions.plist -exportPath build/export \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$RUNNER_TEMP/keys/AuthKey_$ASC_KEY_ID.p8" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" | tail -n 80
+          echo "::notice::アップロード完了。数分〜30分ほどで TestFlight に出てきます。"
+      - name: 鍵の削除
+        if: always()
+        working-directory: .
+        run: rm -rf "$RUNNER_TEMP/keys"

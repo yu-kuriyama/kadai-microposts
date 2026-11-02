@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <h1>動画保存</h1>
+    <button id="reload" aria-label="再読み込み">↻</button>
+  </header>
+  <div id="status">探しています…</div>
+  <ul id="list"></ul>
+  <p class="hint" id="hint" hidden>
+    動画が出てこないときは、ページで<strong>動画を一度再生してから</strong>もう一度このボタンを押してください。
+  </p>
+  <script src="popup.js"></script>
+</body>
+</html>

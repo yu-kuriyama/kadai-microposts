@@ -1,0 +1,5 @@
+VideoSaver.xcodeproj/
+App/Info.plist
+Extension/Info.plist
+build/
+DerivedData/

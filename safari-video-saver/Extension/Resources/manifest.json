@@ -1,0 +1,34 @@
+{
+  "manifest_version": 3,
+  "name": "動画保存",
+  "description": "Safariで開いているページの動画を見つけて、写真アプリに保存します。",
+  "version": "1.0",
+  "icons": {
+    "48": "icon-48.png",
+    "96": "icon-96.png",
+    "128": "icon-128.png",
+    "256": "icon-256.png",
+    "512": "icon-512.png"
+  },
+  "background": {
+    "scripts": ["background.js"],
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "js": ["content.js"],
+      "matches": ["<all_urls>"],
+      "all_frames": true,
+      "run_at": "document_start"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "toolbar-16.png",
+      "32": "toolbar-32.png",
+      "48": "toolbar-48.png"
+    }
+  },
+  "permissions": []
+}
