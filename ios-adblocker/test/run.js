@@ -61,12 +61,39 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
   // メニューを開いたままスクロールして放置しても消えない
   await page.mouse.wheel(0, 300); await wait(1500);
   check(await page.evaluate(() => !!document.getElementById('drawer')), 'しばらく経ってもメニューは残る');
+  check(await page.evaluate(() => !document.querySelector('[data-popup-killer-ui="zap"]')), '自分で開いたメニューには「消す」ボタンを出さない');
 
   console.log('■ 地図アプリ風（全画面アプリ）');
   page = await ctx.newPage();
   await page.goto(url('appshell.html'));
   await wait(1500);
   check(await page.evaluate(() => !!document.getElementById('app')), '全画面アプリ本体は残す');
+
+  console.log('■ 知らない広告会社・すり抜けるポップアップ');
+  page = await ctx.newPage();
+  await page.goto(url('unknown.html'));
+  await wait(2000);
+  let s3 = await page.evaluate(() => ({
+    anchor: !!document.getElementById('unknown-anchor'), abs: !!document.getElementById('abs-overlay'),
+    yt: !!document.getElementById('yt'), sneaky: !!document.getElementById('sneaky'),
+    zap: !!document.querySelector('[data-popup-killer-ui="zap"]'),
+  }));
+  check(!s3.anchor, '知らない広告会社の iframe 広告（下に張り付く）を消す');
+  check(!s3.abs, 'absolute で画面を覆うポップアップを消す');
+  check(s3.yt, 'YouTube の埋め込みは残す');
+  check(s3.sneaky && s3.zap, '自動で消せないポップアップには「🛡️ 消す」ボタンを出す');
+  await page.evaluate(() => document.querySelector('[data-popup-killer-ui="zap"]').shadowRoot.getElementById('go').click());
+  await wait(2000);
+  check(await page.evaluate(() => { const e = document.getElementById('sneaky'); return !e || getComputedStyle(e).display === 'none'; }), '「消す」を押したら消え、また出てきても消える');
+  await page.reload(); await wait(2000);
+  check(await page.evaluate(() => { const e = document.getElementById('sneaky'); return !e || getComputedStyle(e).display === 'none'; }), '再読み込みしても覚えていて自動で消す');
+  check(await page.evaluate(() => !document.querySelector('[data-popup-killer-ui="zap"]')), '覚えた後はボタンが出ない');
+
+  console.log('■ 普通のサイトでボタンが出ないこと');
+  for (const f of ['legit.html', 'appshell.html']) {
+    page = await ctx.newPage(); await page.goto(url(f)); await wait(1500);
+    check(await page.evaluate(() => !document.querySelector('[data-popup-killer-ui="zap"]')), f + ' で「消す」ボタンは出ない');
+  }
 
   await browser.close();
   console.log(fail ? `\n${fail} 件失敗` : '\nすべて成功');

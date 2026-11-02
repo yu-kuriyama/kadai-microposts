@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PopupKiller（しつこい広告・ポップアップ消し）
 // @namespace    https://github.com/yu-kuriyama/kadai-microposts
-// @version      1.1.1
+// @version      1.2.0
 // @description  何回消しても出てくるポップアップ広告・画面を覆う広告・下に張り付く広告を自動で消し続けます。iPhone の Safari（Userscripts アプリ）用。
 // @author       yu-kuriyama
 // @match        *://*/*
@@ -86,6 +86,8 @@
   const AD_TOKEN_RE = /(^|[-_\s])(ads?|advert(isement)?|adsense|sponsor(ed)?|banner|interstitial|vignette|popunder|promo)([-_\s]|\d|$)/i;
   // こちらは「ほぼ確実に広告」の単語（banner / promo などは普通のサイトでも使うので外す）
   const STRONG_AD_TOKEN_RE = /(^|[-_\s])(ads?|advert(isement)?|adsense|sponsored|interstitial|vignette|popunder)([-_\s]|\d|$)/i;
+  // 広告ではない外部埋め込み（動画・SNS・地図・決済・ログイン・チャット等）
+  const EMBED_ALLOW_RE = /(youtube(-nocookie)?\.com|youtu\.be|vimeo\.com|twitter\.com|x\.com|instagram\.com|facebook\.com\/plugins|tiktok\.com|nicovideo\.jp|spotify\.com|soundcloud\.com|google\.com\/maps|maps\.google|docs\.google|forms\.gle|recaptcha|hcaptcha|challenges\.cloudflare|stripe\.com|paypal\.com|apple\.com|appleid|accounts\.google|line\.me|intercom|zendesk|zdassets|crisp\.chat|tawk\.to|livechat|hubspot|drift\.com|freshchat|channel\.io|karte\.io|chatplus|disqus|codepen|jsfiddle|amazon\.co\.jp\/dp|speakerdeck|slideshare|tver\.jp|abema)/i;
   const CLOSE_TEXT_RE = /^(×|✕|✖|x|X|閉じる|とじる|close|閉|skip|スキップ|今はしない|あとで)$/;
 
   const UI_ATTR = 'data-popup-killer-ui';
@@ -109,6 +111,14 @@
       localStorage.setItem(STORE_KEY, JSON.stringify(list));
     } catch (e) { /* ignore */ }
   }
+  // 「🛡️ 消す」ボタンで覚えたポップアップ（サイトごと）
+  const RULES_KEY = '__popupKillerRules';
+  function readRules() {
+    try { return JSON.parse(localStorage.getItem(RULES_KEY) || '[]'); } catch (e) { return []; }
+  }
+  function writeRules(list) {
+    try { localStorage.setItem(RULES_KEY, JSON.stringify(list.slice(-50))); } catch (e) { /* ignore */ }
+  }
   if (BUILTIN_SKIP_HOSTS.some(h => hrefNoQuery.includes(h))) return;
   if (readOffHosts().includes(host)) return;
 
@@ -122,9 +132,46 @@
     `html.pk-unlock, html.pk-unlock body { overflow: auto !important; overflow-y: auto !important; position: static !important; height: auto !important; touch-action: auto !important; }\n` +
     `html.pk-unlock body { top: auto !important; }\n`;
   (document.head || document.documentElement).appendChild(style);
+  const learnedStyle = document.createElement('style');
+  learnedStyle.setAttribute(UI_ATTR, 'learned');
+  let learnedRules = readRules();
+  function applyLearned() {
+    learnedStyle.textContent = learnedRules.length
+      ? learnedRules.join(',\n') + ' { display: none !important; visibility: hidden !important; }' : '';
+  }
+  applyLearned();
+  (document.head || document.documentElement).appendChild(learnedStyle);
   // サイト側が head を書き換えて style を消しても戻す
   function ensureStyle() {
     if (!style.isConnected) (document.head || document.documentElement).appendChild(style);
+    if (!learnedStyle.isConnected) (document.head || document.documentElement).appendChild(learnedStyle);
+  }
+
+  // 要素を次回も見つけられるセレクタを作る（毎回変わるランダムな名前は使わない）
+  function selectorFor(el) {
+    const stable = t => t && t.length < 40 && !/\d{3,}|[a-zA-Z0-9]{12,}|^(css|sc|jsx|svelte)-/.test(t);
+    const esc = window.CSS && CSS.escape ? CSS.escape : (t => t);
+    if (el.id && stable(el.id)) return '#' + esc(el.id);
+    const cls = Array.from(el.classList).filter(stable).slice(0, 3);
+    if (cls.length) return el.tagName.toLowerCase() + cls.map(c => '.' + esc(c)).join('');
+    return null;
+  }
+  let learnedThisPage = [];
+  function learn(el) {
+    const sel = selectorFor(el);
+    if (!sel || learnedRules.includes(sel)) return;
+    try { document.querySelector(sel); } catch (e) { return; }
+    learnedRules.push(sel);
+    learnedThisPage.push(sel);
+    writeRules(learnedRules);
+    applyLearned();
+  }
+  function forgetLearnedThisPage() {
+    if (!learnedThisPage.length) return;
+    learnedRules = learnedRules.filter(r => !learnedThisPage.includes(r));
+    learnedThisPage = [];
+    writeRules(learnedRules);
+    applyLearned();
   }
 
   // Google の全画面広告（#google_vignette）を URL から消す
@@ -206,6 +253,11 @@
     for (let n = el; n && n !== document.body && n !== document.documentElement; n = n.parentElement) {
       const cs = getComputedStyle(n);
       if (cs.position === 'fixed' || (cs.position === 'sticky' && n.getBoundingClientRect().height < vh() * 0.4)) found = n;
+      else if (cs.position === 'absolute' && (parseInt(cs.zIndex, 10) || 0) >= 1000) {
+        // fixed ではなく absolute ＋ 最前面で画面を覆うタイプのポップアップ
+        const r = n.getBoundingClientRect();
+        if (r.width * r.height >= vw() * vh() * 0.25) found = n;
+      }
     }
     return found;
   }
@@ -226,6 +278,19 @@
   function isAdIframe(f) {
     const src = (f.getAttribute('src') || '') + ' ' + (f.id || '') + ' ' + (f.name || '');
     return AD_DOMAIN_RE.test(src);
+  }
+
+  // 外部サイトの iframe（広告によく使われる）。動画・SNS などの普通の埋め込みは除く
+  function isSuspiciousFrame(f) {
+    const src = f.getAttribute('src') || '';
+    if (!src || src === 'about:blank' || src.startsWith('javascript:')) return true; // JS で中身を書き込む広告枠
+    try {
+      const u = new URL(src, location.href);
+      if (u.hostname === host) return false;
+      const site = h => h.split('.').slice(-2).join('.');
+      if (site(u.hostname) === site(host)) return false;
+      return !EMBED_ALLOW_RE.test(u.href);
+    } catch (e) { return false; }
   }
 
   function adDescendants(el) {
@@ -339,6 +404,13 @@
       return tl > 80 ? 'strip' : 'remove';
     }
 
+    // A2. 中身がほぼ「外部の iframe」だけの固定要素（知らない広告会社の広告）
+    const frames = el.tagName === 'IFRAME' ? [el] : Array.from(el.querySelectorAll('iframe'));
+    if (frames.some(isSuspiciousFrame)) {
+      if (tl < 80) return 'remove';
+      if (areaRatio >= 0.3 && tl < 400) return 'remove';
+    }
+
     // B. 画面を覆うオーバーレイ（ポップアップ広告・アドブロック検出・登録しろ画面など）
     if (areaRatio >= 0.3) {
       // ページを開いた時点で既にあった、不透明でスクロールも止めていない全画面要素はアプリ本体とみなす
@@ -408,6 +480,7 @@
       } catch (e) { /* ignore */ }
     }
     document.documentElement.classList.remove('pk-unlock');
+    forgetLearnedThisPage();
   }
 
   // ---------------------------------------------------------------------------
@@ -440,11 +513,15 @@
   function countHiddenAds() {
     let n = 0;
     let hits;
-    try { hits = document.querySelectorAll(AD_SELECTOR_STR); } catch (e) { return false; }
+    const sel = learnedRules.length ? AD_SELECTOR_STR + ',' + learnedRules.join(',') : AD_SELECTOR_STR;
+    try { hits = document.querySelectorAll(sel); } catch (e) { return false; }
+    if (learnedRules.length && hits.length && isScrollLocked()) {
+      try { if (document.querySelector(learnedRules.join(','))) unlockScroll(); } catch (e) { /* ignore */ }
+    }
     for (const el of hits) {
       if (counted.has(el)) continue;
       counted.add(el);
-      if (el.parentElement && el.parentElement.closest(AD_SELECTOR_STR)) continue; // 入れ子は1件として数える
+      if (el.parentElement && el.parentElement.closest(sel)) continue; // 入れ子は1件として数える
       n++;
     }
     blockedCount += n;
@@ -471,7 +548,60 @@
     // 広告セレクタに当たった要素は CSS で消えているが、スクロールロックだけ残ることがあるので解除
     if (document.querySelector('ins.adsbygoogle[data-vignette-loaded="true"], [id^="gn_interstitial"]')) unlockScroll();
     if (changed) showToast();
+    findManualCandidate();
   }
+
+  // ---------------------------------------------------------------------------
+  // 自動で消せなかったポップアップ用の「🛡️ 消す」ボタン
+  // ---------------------------------------------------------------------------
+  let candidate = null, zap = null;
+  function findManualCandidate() {
+    let found = null;
+    const w = vw(), h = vh();
+    for (const [x, y] of [[w * 0.5, h * 0.5], [w * 0.5, h * 0.35], [w * 0.5, h * 0.65]]) {
+      const top = document.elementFromPoint(x, y);
+      if (!top || isOurUI(top)) continue;
+      const f = outermostFixed(top);
+      if (!f || allowed.has(f)) continue;
+      if (baseline.has(f) && !isScrollLocked()) continue;
+      if (visibleRect(f).area / (w * h) < 0.2) continue;
+      found = f; break;
+    }
+    candidate = found;
+    if (found) showZap(); else hideZap();
+  }
+  function showZap() {
+    if (!document.body) return;
+    if (!zap) {
+      zap = document.createElement('div');
+      zap.setAttribute(UI_ATTR, 'zap');
+      zap.attachShadow({ mode: 'open' }).innerHTML = `
+        <style>
+          .box { position: fixed; right: 10px; top: calc(10px + env(safe-area-inset-top)); z-index: 2147483647;
+                 display: flex; gap: 6px; align-items: center; font: 600 14px/1 -apple-system, system-ui, sans-serif; }
+          button { all: unset; cursor: pointer; padding: 10px 14px; border-radius: 999px; color: #fff;
+                   background: #e5322d; box-shadow: 0 4px 16px rgba(0,0,0,.35); }
+          #no { background: rgba(20,20,22,.9); padding: 10px 12px; }
+        </style>
+        <div class="box"><button id="go">🛡️ 消す</button><button id="no">✕</button></div>`;
+      zap.shadowRoot.getElementById('go').addEventListener('click', () => {
+        const el = candidate;
+        if (!el) return hideZap();
+        learn(el);
+        removeEl(el);
+        unlockScroll();
+        hideZap();
+        showToast();
+        setTimeout(scan, 50);
+      });
+      zap.shadowRoot.getElementById('no').addEventListener('click', () => {
+        if (candidate) allowed.add(candidate);
+        hideZap();
+      });
+    }
+    if (!zap.isConnected) document.documentElement.appendChild(zap);
+  }
+  function hideZap() { if (zap) zap.remove(); }
 
   // ---------------------------------------------------------------------------
   // 小さな通知（元に戻す / このサイトでOFF）
