@@ -1,0 +1,11 @@
+services:
+  video-dl:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - APP_PASSWORD=${APP_PASSWORD:-}
+      - MAX_PARALLEL=2
+    volumes:
+      - ./downloads:/data
+    restart: unless-stopped

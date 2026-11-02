@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="動画DL">
+<meta name="theme-color" content="#111318">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" href="icon-192.png">
+<title>動画DL</title>
+<style>
+  :root {
+    --bg: #f4f5f7; --card: #fff; --text: #16181d; --sub: #6b7280; --line: #e3e5ea;
+    --accent: #ff3b5c; --accent-text: #fff; --ok: #16a34a; --err: #dc2626; --bar: #e8e9ee;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0d0f13; --card: #181b21; --text: #eef0f4; --sub: #9aa1ad; --line: #2a2e37; --bar: #2a2e37; }
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", sans-serif; }
+  body { padding: calc(env(safe-area-inset-top) + 12px) 16px calc(env(safe-area-inset-bottom) + 24px); max-width: 640px; margin: 0 auto; }
+  header { display: flex; align-items: center; justify-content: space-between; margin: 4px 0 14px; }
+  h1 { font-size: 26px; margin: 0; letter-spacing: .02em; }
+  .icon-btn { background: none; border: 0; color: var(--sub); font-size: 22px; padding: 6px; }
+  .card { background: var(--card); border-radius: 16px; padding: 14px; border: 1px solid var(--line); }
+  textarea { width: 100%; min-height: 110px; resize: vertical; border: 1px solid var(--line); border-radius: 12px;
+    padding: 12px; font-size: 16px; background: var(--bg); color: var(--text); font-family: inherit; }
+  .row { display: flex; gap: 8px; margin-top: 10px; }
+  .seg { display: flex; background: var(--bg); border-radius: 10px; padding: 3px; margin-top: 10px; border: 1px solid var(--line); }
+  .seg label { flex: 1; text-align: center; font-size: 13px; padding: 8px 4px; border-radius: 8px; color: var(--sub); }
+  .seg input { display: none; }
+  .seg input:checked + span { color: var(--text); font-weight: 600; }
+  .seg label:has(input:checked) { background: var(--card); box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+  button.main { flex: 1; background: var(--accent); color: var(--accent-text); border: 0; border-radius: 12px;
+    padding: 14px; font-size: 17px; font-weight: 700; }
+  button.sub { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; font-size: 15px; }
+  button:disabled { opacity: .5; }
+  h2 { font-size: 15px; color: var(--sub); margin: 22px 4px 8px; font-weight: 600; display: flex; justify-content: space-between; }
+  h2 button { background: none; border: 0; color: var(--accent); font-size: 14px; }
+  .job { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 12px; margin-bottom: 10px; display: flex; gap: 12px; }
+  .thumb { width: 84px; height: 56px; border-radius: 8px; background: var(--bar) center/cover no-repeat; flex: none; }
+  .info { flex: 1; min-width: 0; }
+  .title { font-size: 14px; font-weight: 600; line-height: 1.35; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; word-break: break-all; }
+  .meta { font-size: 12px; color: var(--sub); margin-top: 4px; white-space: pre-wrap; word-break: break-all; }
+  .meta.err { color: var(--err); }
+  .bar { height: 5px; background: var(--bar); border-radius: 3px; margin-top: 8px; overflow: hidden; }
+  .bar > i { display: block; height: 100%; background: var(--accent); width: 0; transition: width .4s; }
+  .bar.indef > i { width: 35%; animation: slide 1.2s infinite ease-in-out; }
+  @keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(300%); } }
+  .actions { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+  .actions a, .actions button { font-size: 13px; padding: 7px 11px; border-radius: 9px; border: 1px solid var(--line);
+    background: var(--bg); color: var(--text); text-decoration: none; font-family: inherit; }
+  .actions .primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
+  .empty { text-align: center; color: var(--sub); font-size: 14px; padding: 30px 0; }
+  .toast { position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom) + 24px); transform: translateX(-50%);
+    background: rgba(20,22,28,.92); color: #fff; padding: 10px 16px; border-radius: 12px; font-size: 14px; opacity: 0;
+    transition: opacity .25s; pointer-events: none; max-width: 90%; text-align: center; }
+  .toast.show { opacity: 1; }
+  dialog { border: 0; border-radius: 16px; padding: 20px; width: min(92vw, 420px); background: var(--card); color: var(--text); }
+  dialog::backdrop { background: rgba(0,0,0,.45); }
+  dialog input { width: 100%; font-size: 16px; padding: 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--text); margin: 8px 0 14px; }
+  dialog p { font-size: 13px; color: var(--sub); line-height: 1.6; }
+</style>
+</head>
+<body>
+<header>
+  <h1>動画DL</h1>
+  <button class="icon-btn" id="settingsBtn" aria-label="設定">⚙︎</button>
+</header>
+
+<div class="card">
+  <textarea id="urls" placeholder="動画ページのURLを貼り付け&#10;（改行で何件でもOK）" autocapitalize="off" autocorrect="off" spellcheck="false"></textarea>
+  <div class="seg" role="radiogroup">
+    <label><input type="radio" name="mode" value="iphone" checked><span>iPhone用</span></label>
+    <label><input type="radio" name="mode" value="best"><span>最高画質</span></label>
+    <label><input type="radio" name="mode" value="audio"><span>音声のみ</span></label>
+  </div>
+  <div class="row">
+    <button class="sub" id="pasteBtn">貼り付け</button>
+    <button class="main" id="goBtn">ダウンロード</button>
+  </div>
+</div>
+
+<h2><span>ダウンロード一覧</span><button id="clearBtn">完了分を削除</button></h2>
+<div id="list"><div class="empty">まだありません</div></div>
+
+<div class="toast" id="toast"></div>
+
+<dialog id="settings">
+  <form method="dialog">
+    <strong>設定</strong>
+    <p>サーバーにパスワード（APP_PASSWORD）を設定している場合は入力してください。</p>
+    <input id="pw" type="password" placeholder="パスワード" autocomplete="current-password">
+    <div class="row"><button class="main" value="save">保存</button></div>
+    <p id="ver"></p>
+  </form>
+</dialog>
+
+<script>
+const $ = s => document.querySelector(s);
+const store = {
+  get(k) { try { return localStorage.getItem(k) || ""; } catch { return ""; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+};
+let password = store.get("pw");
+const blobs = {}; // 写真保存用に読み込んだファイル
+
+function toast(msg) {
+  const t = $("#toast"); t.textContent = msg; t.classList.add("show");
+  clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove("show"), 2600);
+}
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, { ...opts, headers: { "Content-Type": "application/json", "X-App-Password": password, ...(opts.headers || {}) } });
+  if (res.status === 401) { openSettings(); throw new Error("パスワードが必要です"); }
+  if (!res.ok) { let m = res.statusText; try { m = (await res.json()).detail || m; } catch {} throw new Error(m); }
+  return res.json();
+}
+
+function fileUrl(j, inline) {
+  return `api/jobs/${j.id}/file?key=${encodeURIComponent(password)}${inline ? "&inline=1" : ""}`;
+}
+
+const fmtSize = b => !b ? "" : b > 1e9 ? (b / 1e9).toFixed(2) + " GB" : b > 1e6 ? (b / 1e6).toFixed(1) + " MB" : Math.round(b / 1e3) + " KB";
+const fmtEta = s => s == null ? "" : s >= 60 ? `残り${Math.floor(s / 60)}分${s % 60}秒` : `残り${s}秒`;
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+function render(list) {
+  const el = $("#list");
+  if (!list.length) { el.innerHTML = '<div class="empty">まだありません</div>'; return; }
+  el.innerHTML = list.map(j => {
+    const title = esc(j.title || j.url);
+    let meta = "", bar = "", actions = "";
+    if (j.status === "queued") { meta = "順番待ち…"; bar = '<div class="bar indef"><i></i></div>'; }
+    else if (j.status === "downloading") {
+      const p = j.progress;
+      meta = [p != null ? p + "%" : "ダウンロード中", fmtSize(j.downloaded) + (j.total ? " / " + fmtSize(j.total) : ""), j.speed ? fmtSize(j.speed) + "/s" : "", fmtEta(j.eta)].filter(Boolean).join("  ");
+      bar = p != null ? `<div class="bar"><i style="width:${p}%"></i></div>` : '<div class="bar indef"><i></i></div>';
+    } else if (j.status === "processing") { meta = "変換中…"; bar = '<div class="bar indef"><i></i></div>'; }
+    else if (j.status === "done") {
+      meta = "完了  " + fmtSize(j.size);
+      const ready = blobs[j.id];
+      actions = `<button class="primary" data-act="photo" data-id="${j.id}">${ready ? "写真/ファイルに保存" : "iPhoneに保存"}</button>
+        <a href="${fileUrl(j)}" download>ファイルに直接</a>
+        <a href="${fileUrl(j, true)}" target="_blank">再生</a>
+        <button data-act="del" data-id="${j.id}">削除</button>`;
+    } else if (j.status === "error") {
+      meta = `<span class="err">${esc(j.error || "失敗しました")}</span>`;
+      actions = `<button data-act="retry" data-id="${j.id}">再試行</button><button data-act="del" data-id="${j.id}">削除</button>`;
+    }
+    const thumb = j.thumbnail ? ` style="background-image:url('${esc(j.thumbnail)}')"` : "";
+    return `<div class="job"><div class="thumb"${thumb}></div><div class="info">
+      <div class="title">${title}</div><div class="meta ${j.status === "error" ? "err" : ""}">${meta}</div>${bar}
+      <div class="actions">${actions}</div></div></div>`;
+  }).join("");
+}
+
+let jobs = [];
+async function refresh() {
+  try { jobs = await api("api/jobs"); render(jobs); } catch (e) { /* 通信失敗時は次回に再試行 */ }
+  const busy = jobs.some(j => ["queued", "downloading", "processing"].includes(j.status));
+  clearTimeout(refresh.t); refresh.t = setTimeout(refresh, busy ? 1000 : 4000);
+}
+
+$("#goBtn").onclick = async () => {
+  const text = $("#urls").value.trim();
+  if (!text) { toast("URLを入力してください"); return; }
+  const mode = document.querySelector('input[name=mode]:checked').value;
+  $("#goBtn").disabled = true;
+  try {
+    const created = await api("api/jobs", { method: "POST", body: JSON.stringify({ urls: text.split(/\n+/), mode }) });
+    $("#urls").value = "";
+    toast(`${created.length}件を追加しました`);
+    refresh();
+  } catch (e) { toast(e.message); }
+  $("#goBtn").disabled = false;
+};
+
+$("#pasteBtn").onclick = async () => {
+  try {
+    const t = await navigator.clipboard.readText();
+    if (t) $("#urls").value = ($("#urls").value ? $("#urls").value + "\n" : "") + t.trim();
+  } catch { toast("入力欄を長押しして「ペースト」してください"); }
+};
+
+$("#clearBtn").onclick = async () => {
+  const done = jobs.filter(j => j.status === "done" || j.status === "error");
+  if (!done.length) return;
+  if (!confirm(`${done.length}件をサーバーから削除しますか？`)) return;
+  for (const j of done) { try { await api(`api/jobs/${j.id}`, { method: "DELETE" }); } catch {} delete blobs[j.id]; }
+  refresh();
+};
+
+$("#list").onclick = async e => {
+  const b = e.target.closest("button[data-act]"); if (!b) return;
+  const id = b.dataset.id, j = jobs.find(x => x.id === id);
+  if (b.dataset.act === "del") {
+    try { await api(`api/jobs/${id}`, { method: "DELETE" }); delete blobs[id]; refresh(); } catch (err) { toast(err.message); }
+  } else if (b.dataset.act === "retry") {
+    try { await api(`api/jobs/${id}/retry`, { method: "POST" }); refresh(); } catch (err) { toast(err.message); }
+  } else if (b.dataset.act === "photo") {
+    // iOS では共有シートを出すには直前のタップが必要なため、
+    // 1回目のタップで読み込み → 2回目のタップで共有シート（「ビデオを保存」）
+    if (!blobs[id]) {
+      b.disabled = true; b.textContent = "読み込み中…";
+      try {
+        const res = await fetch(fileUrl(j));
+        if (!res.ok) throw new Error("読み込み失敗");
+        const blob = await res.blob();
+        blobs[id] = new File([blob], j.filename, { type: blob.type || "video/mp4" });
+        toast("準備できました。もう一度タップして保存");
+      } catch (err) { toast(err.message); }
+      render(jobs); return;
+    }
+    const file = blobs[id];
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try { await navigator.share({ files: [file], title: j.title || "" }); } catch (err) { if (err.name !== "AbortError") toast(err.message); }
+    } else {
+      const a = document.createElement("a"); a.href = URL.createObjectURL(file); a.download = file.name; a.click();
+    }
+  }
+};
+
+function openSettings() {
+  $("#pw").value = password; const d = $("#settings");
+  if (!d.open) d.showModal();
+}
+$("#settingsBtn").onclick = () => {
+  openSettings();
+  api("api/ping").then(r => $("#ver").textContent = "yt-dlp " + r.version).catch(() => {});
+};
+$("#settings").addEventListener("close", () => {
+  if ($("#settings").returnValue === "save") { password = $("#pw").value; store.set("pw", password); refresh(); }
+});
+
+// ショートカット等から ?url=... で開かれた場合は自動で追加
+const params = new URLSearchParams(location.search);
+if (params.get("url")) {
+  $("#urls").value = params.getAll("url").join("\n");
+  history.replaceState(null, "", location.pathname);
+  if (params.get("auto") === "1") $("#goBtn").click();
+}
+
+refresh();
+</script>
+</body>
+</html>
