@@ -1,12 +1,12 @@
-import AVFoundation
 import Foundation
 import Photos
 import UIKit
 import UserNotifications
+import VideoSaverCore
 
 struct DownloadItem: Codable, Identifiable, Equatable {
     enum Kind: String, Codable { case file, hls }
-    enum Status: String, Codable { case waiting, downloading, converting, done, failed }
+    enum Status: String, Codable { case waiting, downloading, converting, paused, done, failed }
 
     var id: String = UUID().uuidString
     var url: String
@@ -19,7 +19,6 @@ struct DownloadItem: Codable, Identifiable, Equatable {
     var receivedBytes: Int64 = 0
     var totalBytes: Int64 = 0
     var fileName: String?
-    var hlsPath: String?
     var savedToPhotos = false
     var note: String?
     var error: String?
@@ -28,7 +27,9 @@ struct DownloadItem: Codable, Identifiable, Equatable {
     var host: String { URL(string: pageURL ?? url)?.host ?? url }
 }
 
-/// ダウンロード本体。アプリがバックグラウンドにいても続くように background URLSession を使う。
+/// ダウンロード本体。
+/// - 通常ファイル: background URLSession（アプリを閉じても続く）
+/// - HLS(m3u8): 自前の HLSDownloader（アプリが裏に回ったら一時停止し、戻ると続きから再開）
 final class DownloadManager: NSObject, ObservableObject {
     static let shared = DownloadManager()
 
@@ -36,9 +37,9 @@ final class DownloadManager: NSObject, ObservableObject {
     var backgroundCompletionHandlers: [String: () -> Void] = [:]
 
     private static let fileSessionID = "videosaver.file"
-    private static let hlsSessionID = "videosaver.hls"
     private var fileSession: URLSession!
-    private var hlsSession: AVAssetDownloadURLSession!
+    private var hlsTasks: [String: Task<Void, Never>] = [:]
+    private var backgroundTasks: [String: UIBackgroundTaskIdentifier] = [:]
     private let storeURL: URL
 
     static var documents: URL {
@@ -57,10 +58,6 @@ final class DownloadManager: NSObject, ObservableObject {
         fileConfig.sessionSendsLaunchEvents = true
         fileConfig.isDiscretionary = false
         fileSession = URLSession(configuration: fileConfig, delegate: self, delegateQueue: .main)
-
-        let hlsConfig = URLSessionConfiguration.background(withIdentifier: Self.hlsSessionID)
-        hlsConfig.sessionSendsLaunchEvents = true
-        hlsSession = AVAssetDownloadURLSession(configuration: hlsConfig, assetDownloadDelegate: self, delegateQueue: .main)
 
         reconcile()
     }
@@ -124,21 +121,7 @@ final class DownloadManager: NSObject, ObservableObject {
             task.taskDescription = item.id
             task.resume()
         case .hls:
-            var options: [String: Any] = [:]
-            if !item.headers.isEmpty { options["AVURLAssetHTTPHeaderFieldsKey"] = item.headers }
-            let asset = AVURLAsset(url: url, options: options)
-            guard let task = hlsSession.makeAssetDownloadTask(
-                asset: asset,
-                assetTitle: Self.safeName(item.title),
-                assetArtworkData: nil,
-                // できるだけ高画質を選ぶ（これ以上が無ければ一番高いもの）
-                options: [AVAssetDownloadTaskMinimumRequiredMediaBitrateKey: 50_000_000]
-            ) else {
-                fail(item.id, "ストリームのダウンロードを開始できませんでした。")
-                return
-            }
-            task.taskDescription = item.id
-            task.resume()
+            startHLS(item)
         }
         mutate(item.id, persist: true) {
             $0.status = .downloading
@@ -163,7 +146,7 @@ final class DownloadManager: NSObject, ObservableObject {
         cancelTask(id)
         if let item = items.first(where: { $0.id == id }) {
             if let url = fileURL(item) { try? FileManager.default.removeItem(at: url) }
-            if let pkg = hlsPackageURL(item) { try? FileManager.default.removeItem(at: pkg) }
+            try? FileManager.default.removeItem(at: Self.hlsWorkDir(id))
         }
         items.removeAll { $0.id == id }
         save()
@@ -238,7 +221,8 @@ final class DownloadManager: NSObject, ObservableObject {
 
     private func cancelTask(_ id: String) {
         fileSession.getAllTasks { tasks in tasks.filter { $0.taskDescription == id }.forEach { $0.cancel() } }
-        hlsSession.getAllTasks { tasks in tasks.filter { $0.taskDescription == id }.forEach { $0.cancel() } }
+        hlsTasks.removeValue(forKey: id)?.cancel()
+        endBackground(id)
     }
 
     /// アプリが終了していた間に消えたタスクを「失敗」にする
@@ -246,28 +230,24 @@ final class DownloadManager: NSObject, ObservableObject {
         let group = DispatchGroup()
         var active = Set<String>()
         let lock = NSLock()
-        let sessions: [URLSession] = [fileSession, hlsSession]
-        for session in sessions {
-            group.enter()
-            session.getAllTasks { tasks in
-                lock.lock()
-                tasks.compactMap { $0.taskDescription }.forEach { active.insert($0) }
-                lock.unlock()
-                group.leave()
-            }
+        group.enter()
+        fileSession.getAllTasks { tasks in
+            lock.lock()
+            tasks.compactMap { $0.taskDescription }.forEach { active.insert($0) }
+            lock.unlock()
+            group.leave()
+        }
+        // HLS は次にアプリが前に来たときに続きから再開する
+        for item in items where item.kind == .hls && [.downloading, .waiting, .converting].contains(item.status) {
+            mutate(item.id) { $0.status = .paused }
         }
         group.notify(queue: .main) {
-            for item in self.items where (item.status == .downloading || item.status == .waiting || item.status == .converting)
+            for item in self.items where item.kind == .file
+                && (item.status == .downloading || item.status == .waiting || item.status == .converting)
                 && !active.contains(item.id) {
                 self.fail(item.id, "中断されました。「再試行」を押してください。")
             }
         }
-    }
-
-    private func hlsPackageURL(_ item: DownloadItem) -> URL? {
-        guard let path = item.hlsPath else { return nil }
-        if path.hasPrefix("/") { return URL(fileURLWithPath: path) }
-        return URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(path)
     }
 
     private func load() {
@@ -327,63 +307,104 @@ final class DownloadManager: NSObject, ObservableObject {
         return Data(base64Encoded: b)
     }
 
-    // MARK: - HLS → mp4 変換
+    // MARK: - HLS
 
-    private func exportHLS(_ id: String, package: URL) {
-        guard let item = items.first(where: { $0.id == id }) else { return }
-        mutate(id, persist: true) { $0.status = .converting }
-        let asset = AVURLAsset(url: package)
+    static func hlsWorkDir(_ id: String) -> URL {
+        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("hls", isDirectory: true)
+            .appendingPathComponent(id, isDirectory: true)
+    }
+
+    private func startHLS(_ item: DownloadItem) {
+        guard hlsTasks[item.id] == nil, let url = URL(string: item.url) else { return }
+        let id = item.id
         let title = item.title
-        DispatchQueue.global(qos: .userInitiated).async {
-            Self.export(asset: asset, title: title,
-                        presets: [AVAssetExportPresetPassthrough, AVAssetExportPresetHighestQuality]) { result in
-                DispatchQueue.main.async {
-                    try? FileManager.default.removeItem(at: package)
-                    self.mutate(id) { $0.hlsPath = nil }
-                    switch result {
-                    case .success(let url): self.finish(id, file: url)
-                    case .failure(let message): self.fail(id, "mp4への変換に失敗しました: \(message)")
-                    }
-                }
+        let work = Self.hlsWorkDir(id)
+        let tmpOutput = work.appendingPathComponent("output.mp4")
+        let downloader = HLSDownloader(url: url, headers: item.headers, workDir: work)
+        downloader.onProgress = { p in
+            DispatchQueue.main.async { DownloadManager.shared.updateHLSProgress(id, p) }
+        }
+        beginBackground(id)
+        hlsTasks[id] = Task.detached(priority: .userInitiated) {
+            var failure: Error?
+            do {
+                try await downloader.download(to: tmpOutput)
+            } catch {
+                failure = error
+            }
+            let error = failure
+            await MainActor.run {
+                DownloadManager.shared.completeHLS(id: id, title: title, work: work, output: tmpOutput, error: error)
             }
         }
     }
 
-    private enum ExportResult { case success(URL), failure(String) }
+    private func updateHLSProgress(_ id: String, _ p: Double) {
+        mutate(id) {
+            guard $0.status != .paused else { return }
+            $0.progress = p
+            $0.status = p >= 0.92 ? .converting : .downloading
+        }
+    }
 
-    private static func export(asset: AVAsset, title: String, presets: [String],
-                               completion: @escaping (ExportResult) -> Void) {
-        guard let preset = presets.first else {
-            completion(.failure("対応していない形式です"))
+    private func completeHLS(id: String, title: String, work: URL, output: URL, error: Error?) {
+        hlsTasks[id] = nil
+        endBackground(id)
+        guard let current = items.first(where: { $0.id == id }), current.status != .paused else { return }
+        if let error {
+            if error is CancellationError { return }
+            fail(id, error.localizedDescription)
             return
         }
-        let rest = Array(presets.dropFirst())
-        guard let session = AVAssetExportSession(asset: asset, presetName: preset) else {
-            export(asset: asset, title: title, presets: rest, completion: completion)
-            return
+        let dest = Self.uniqueURL(title: title, ext: "mp4")
+        do {
+            try FileManager.default.moveItem(at: output, to: dest)
+            try? FileManager.default.removeItem(at: work)
+            finish(id, file: dest)
+        } catch {
+            fail(id, "ファイルを保存できませんでした: \(error.localizedDescription)")
         }
-        let types = session.supportedFileTypes
-        let type: AVFileType
-        if types.contains(.mp4) { type = .mp4 } else if types.contains(.mov) { type = .mov } else if let first = types.first { type = first } else {
-            export(asset: asset, title: title, presets: rest, completion: completion)
-            return
-        }
-        let dest = uniqueURL(title: title, ext: type == .mov ? "mov" : "mp4")
-        session.outputURL = dest
-        session.outputFileType = type
-        session.shouldOptimizeForNetworkUse = true
-        session.exportAsynchronously {
-            if session.status == .completed {
-                completion(.success(dest))
-            } else {
-                try? FileManager.default.removeItem(at: dest)
-                if rest.isEmpty {
-                    completion(.failure(session.error?.localizedDescription ?? "不明なエラー"))
-                } else {
-                    export(asset: asset, title: title, presets: rest, completion: completion)
-                }
+    }
+
+    /// アプリが前に来たとき：一時停止中の HLS を続きから再開
+    func resumePaused() {
+        for item in items where item.kind == .hls && hlsTasks[item.id] == nil
+            && [.paused, .downloading, .waiting, .converting].contains(item.status) {
+            mutate(item.id, persist: true) {
+                $0.status = .downloading
+                $0.note = nil
             }
+            startHLS(item)
         }
+    }
+
+    private func beginBackground(_ id: String) {
+        endBackground(id)
+        let task = UIApplication.shared.beginBackgroundTask(withName: "hls-\(id)") {
+            DownloadManager.shared.pauseHLS(id)
+        }
+        backgroundTasks[id] = task
+    }
+
+    private func endBackground(_ id: String) {
+        if let task = backgroundTasks.removeValue(forKey: id), task != .invalid {
+            UIApplication.shared.endBackgroundTask(task)
+        }
+    }
+
+    /// iOS にアプリを止められる直前：いったん止めて、戻ってきたら再開する
+    func pauseHLS(_ id: String) {
+        guard let task = hlsTasks.removeValue(forKey: id) else { endBackground(id); return }
+        mutate(id, persist: true) {
+            $0.status = .paused
+            $0.note = "「動画保存」アプリを開くと続きから再開します。"
+        }
+        task.cancel()
+        if let item = items.first(where: { $0.id == id }) {
+            notify(title: "ダウンロードを一時停止しました", body: "アプリを開くと続きから再開します：\(item.title)")
+        }
+        endBackground(id)
     }
 
     // MARK: - 通知
@@ -405,7 +426,7 @@ final class DownloadManager: NSObject, ObservableObject {
 
 // MARK: - URLSession のコールバック
 
-extension DownloadManager: URLSessionDownloadDelegate, AVAssetDownloadDelegate {
+extension DownloadManager: URLSessionDownloadDelegate {
     // 通常ファイル：進み具合
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64,
                     totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
@@ -435,39 +456,12 @@ extension DownloadManager: URLSessionDownloadDelegate, AVAssetDownloadDelegate {
         }
     }
 
-    // HLS：保存場所
-    func urlSession(_ session: URLSession, assetDownloadTask: AVAssetDownloadTask, didFinishDownloadingTo location: URL) {
-        guard let id = assetDownloadTask.taskDescription else { return }
-        mutate(id, persist: true) { $0.hlsPath = location.relativePath }
-    }
-
-    // HLS：進み具合
-    func urlSession(_ session: URLSession, assetDownloadTask: AVAssetDownloadTask, didLoad timeRange: CMTimeRange,
-                    totalTimeRangesLoaded loadedTimeRanges: [NSValue], timeRangeExpectedToLoad: CMTimeRange) {
-        guard let id = assetDownloadTask.taskDescription else { return }
-        let loaded = loadedTimeRanges.reduce(0.0) { $0 + CMTimeGetSeconds($1.timeRangeValue.duration) }
-        let total = CMTimeGetSeconds(timeRangeExpectedToLoad.duration)
-        mutate(id) {
-            $0.status = .downloading
-            $0.progress = total > 0 ? min(1, loaded / total) : 0
-        }
-    }
-
     // 共通：終了
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        guard let id = task.taskDescription, let item = items.first(where: { $0.id == id }) else { return }
+        guard let id = task.taskDescription, items.contains(where: { $0.id == id }) else { return }
         if let error = error as NSError? {
             if error.code == NSURLErrorCancelled { return }
-            if let pkg = hlsPackageURL(item) { try? FileManager.default.removeItem(at: pkg) }
             fail(id, "ダウンロードに失敗しました: \(error.localizedDescription)")
-            return
-        }
-        if task is AVAssetDownloadTask {
-            guard let pkg = hlsPackageURL(item) else {
-                fail(id, "ダウンロードしたデータが見つかりません。")
-                return
-            }
-            exportHLS(id, package: pkg)
         }
     }
 

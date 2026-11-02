@@ -4,6 +4,9 @@ options:
   deploymentTarget:
     iOS: "16.0"
   createIntermediateGroups: true
+packages:
+  VideoSaverCore:
+    path: Core
 settings:
   base:
     # ↓ 自分用に変える（Apple Developer の Team ID と、好きなバンドルID）
@@ -23,6 +26,7 @@ targets:
     dependencies:
       - target: VideoSaverExtension
         embed: true
+      - package: VideoSaverCore
     info:
       path: App/Info.plist
       properties:

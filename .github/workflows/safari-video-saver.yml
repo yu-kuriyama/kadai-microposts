@@ -21,6 +21,9 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
+      - name: HLS ダウンローダーのテスト（実際に動画を組み立ててデコードまで確認）
+        working-directory: safari-video-saver/Core
+        run: swift test 2>&1 | tail -n 80
       - name: XcodeGen をインストール
         run: brew install xcodegen
       - name: Xcode プロジェクトを生成

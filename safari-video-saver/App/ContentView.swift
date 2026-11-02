@@ -94,6 +94,16 @@ struct DownloadRow: View {
                 Text(progressText)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if item.kind == .hls {
+                    Text("ストリーム動画は、このアプリを開いたままにすると確実です。")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            case .paused:
+                ProgressView(value: item.progress)
+                Text("一時停止中（\(Int(item.progress * 100))%）・このアプリを開くと再開します")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
             case .converting:
                 HStack(spacing: 8) {
                     ProgressView()
