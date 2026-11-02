@@ -26,18 +26,33 @@ webm などの写真アプリが対応していない形式は、「ファイル
 
 ## iPhone に入れる方法
 
-### 方法A：Mac がある場合
+### 方法A：Mac がある場合（おすすめ）
 
-```sh
-brew install xcodegen
-cd safari-video-saver
-xcodegen generate
-open VideoSaver.xcodeproj
-```
+有料の Apple Developer 登録があれば、**入れるのは最初の1回だけで、1年間そのまま使えます**（登録の期限まで）。
 
-1. Xcode でプロジェクト設定 → Signing & Capabilities を開き、両方のターゲット（VideoSaver / VideoSaverExtension）の Team に自分のアカウントを選びます。
-2. `project.yml` の `BUNDLE_PREFIX` を自分用（例：`com.あなたの名前.videosaver`）に変えます。
-3. iPhone をケーブルでつないで ▶︎ を押せばインストールされます。
+**1. 準備（初回のみ）**
+- App Store から **Xcode** をインストールし、一度起動して初期設定を済ませます。
+- Xcode →「Settings…」→「Accounts」→「＋」で、Apple Developer に登録している Apple ID を追加します。
+
+**2. コードをダウンロードしてプロジェクトを作る**
+- https://github.com/yu-kuriyama/kadai-microposts/archive/refs/heads/video-downloader.zip をダウンロードして、ダブルクリックで解凍します。
+- 「ターミナル」アプリを開いて、次の1行を貼り付けて Enter を押します。
+  ```sh
+  sh ~/Downloads/kadai-microposts-video-downloader/safari-video-saver/setup-mac.sh
+  ```
+  必要なツールのインストールが自動で行われ、Xcode でプロジェクトが開きます。
+
+**3. Xcode での操作**
+- 左の一覧の一番上「VideoSaver」（青いアイコン）をクリック →「Signing & Capabilities」タブを開きます。
+- TARGETS の「**VideoSaver**」と「**VideoSaverExtension**」の両方で、「Team」に自分の名前（チーム）を選びます。
+- iPhone をケーブルで Mac につなぎ、iPhone に「このコンピュータを信頼しますか？」と出たら「信頼」を押します。
+- Xcode の上部中央で、接続した iPhone を選んで ▶︎ を押します。
+
+**4. 最初の1回だけ iPhone で必要な設定**
+- 「デベロッパモードを有効にしてください」と出たら、「設定」→「プライバシーとセキュリティ」→「**デベロッパモード**」をオンにします。iPhone が再起動するので、再起動後に「オンにする」を選びます。その後、もう一度 ▶︎ を押してください。
+- 「信頼されていないデベロッパ」と出た場合は、「設定」→「一般」→「VPNとデバイス管理」で自分のアカウントを「信頼」します。
+
+アプリが入ったら、ケーブルは外してかまいません。アプリを更新したときだけ、もう一度 ▶︎ を押します。
 
 ### 方法B：Mac がない場合（GitHub でビルド → TestFlight）
 
