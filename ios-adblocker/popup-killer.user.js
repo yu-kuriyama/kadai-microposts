@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PopupKiller（しつこい広告・ポップアップ消し）
 // @namespace    https://github.com/yu-kuriyama/kadai-microposts
-// @version      1.1.0
+// @version      1.1.1
 // @description  何回消しても出てくるポップアップ広告・画面を覆う広告・下に張り付く広告を自動で消し続けます。iPhone の Safari（Userscripts アプリ）用。
 // @author       yu-kuriyama
 // @match        *://*/*
@@ -55,6 +55,7 @@
     'yads\\.yahoo', 'yads\\.c\\.yimg', 'ad\\.yieldmanager', 'adform\\.net',
     'unrulymedia', 'vidoomy', 'primis\\.tech', 'connatix', 'ad-generation\\.jp',
     'socdm\\.com', 'scaleout\\.jp', 'adpdx', 'ad\\.as\\.amanad', 'amoad\\.com',
+    'carbonads\\.(com|net)', 'buysellads\\.(com|net)', 'ethicalads\\.io',
   ].join('|'), 'i');
 
   // 見つけ次第 CSS で非表示にする広告セレクタ（確実に広告のものだけ）
@@ -71,6 +72,8 @@
     '[id^="gn_interstitial"]', '[id^="gn_expand"]', '[class^="gn_"][class*="_ad"]',
     '[id^="im-"][id$="-ad"]', '[id^="imobile"]', '[id*="i-mobile"]', '.nend_wrapper',
     '[id^="fluct"]', '.fluct-unit', '[id^="microad"]', '.adstir',
+    '#carbonads', '.carbonads', '#carbon-ads', '.carbon-ads', '.carbon-wrap', '[id^="carbonads"]',
+    'a[href*="srv.carbonads.net"]', 'script[src*="carbonads"] + div', '[data-ea-publisher]', '.ethical-ads',
     '.ad', '.ads', '.adsense', '.advertisement', '.ad-banner', '.ad-area', '.ad-box',
     '.ad-wrap', '.ad-wrapper', '.ad-container', '.ad-slot', '.ad-unit', '.ad_area',
     '.ad_box', '.ad_wrap', '.ad-overlay', '.ad-sticky', '.sticky-ad', '.anchor-ad',
