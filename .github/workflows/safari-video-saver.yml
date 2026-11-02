@@ -19,11 +19,13 @@ jobs:
   # 署名なしでビルドが通るか確認する（設定なしでも動く）
   build-check:
     runs-on: macos-15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - name: HLS ダウンローダーのテスト（実際に動画を組み立ててデコードまで確認）
         working-directory: safari-video-saver/Core
-        run: swift test 2>&1 | tail -n 80
+        timeout-minutes: 10
+        run: swift test
       - name: XcodeGen をインストール
         run: brew install xcodegen
       - name: Xcode プロジェクトを生成
@@ -39,6 +41,7 @@ jobs:
   testflight:
     needs: build-check
     runs-on: macos-15
+    timeout-minutes: 40
     env:
       ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
       ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}

@@ -38,6 +38,9 @@ public final class HLSDownloader {
     public let workDir: URL
     public var maxConcurrent = 6
     public var onProgress: ((Double) -> Void)?
+    /// 進行状況のログ（デバッグ用）
+    public var onLog: ((String) -> Void)?
+    private func note(_ s: String) { log.append(s); onLog?(s) }
     /// 選んだ画質などの説明（デバッグ用）
     public private(set) var log: [String] = []
 
@@ -66,14 +69,14 @@ public final class HLSDownloader {
             videoSegments = segs
         case .master(let variants, let renditions):
             guard let best = Self.chooseVariant(variants) else { throw HLSError.invalidPlaylist }
-            log.append("variant: \(best.resolution ?? "?") \(best.bandwidth)bps \(best.codecs ?? "")")
+            note("variant: \(best.resolution ?? "?") \(best.bandwidth)bps \(best.codecs ?? "")")
             guard case .media(let segs, _) = try await playlist(best.uri) else { throw HLSError.invalidPlaylist }
             videoSegments = segs
             if let group = best.audioGroup {
                 let candidates = renditions.filter { $0.type == "AUDIO" && $0.groupID == group && $0.uri != nil }
                 if let audio = candidates.first(where: { $0.isDefault }) ?? candidates.first, let auri = audio.uri {
                     if case .media(let asegs, _) = try await playlist(auri) { audioSegments = asegs }
-                    log.append("separate audio: \(auri.lastPathComponent)")
+                    note("separate audio: \(auri.lastPathComponent)")
                 }
             }
         }
@@ -82,6 +85,7 @@ public final class HLSDownloader {
             if let k = s.key, k.method != "AES-128" { throw HLSError.drm }
         }
 
+        note("segments: video \(videoSegments.count), audio \(audioSegments.count)")
         // 2. セグメントをまとめてダウンロード
         let total = videoSegments.count + audioSegments.count
         var done = 0
@@ -94,6 +98,7 @@ public final class HLSDownloader {
         try await fetchSegments(videoSegments, into: vDir, progress: report)
         if !audioSegments.isEmpty { try await fetchSegments(audioSegments, into: aDir, progress: report) }
 
+        note("downloaded")
         // 3. つなげて mp4 にする
         let videoTrack = try await buildTrack(videoSegments, dir: vDir, name: "video")
         if audioSegments.isEmpty {
@@ -270,7 +275,9 @@ public final class HLSDownloader {
         let output = workDir.appendingPathComponent("\(name).mp4")
         try? FileManager.default.removeItem(at: output)
 
-        switch Self.detect(first, hasMap: segments.first?.map != nil) {
+        let container = Self.detect(first, hasMap: segments.first?.map != nil)
+        note("build \(name): \(container)")
+        switch container {
         case .fmp4:
             // 初期化データ + セグメントをそのままつなげる
             FileManager.default.createFile(atPath: output.path, contents: nil)
@@ -305,12 +312,16 @@ public final class HLSDownloader {
                         let base = min(v.map(\.dts).min() ?? .max, a.map(\.pts).min() ?? .max)
                         guard base != .max else { throw HLSError.noMedia }
                         try writer.start(sps: demuxer.sps, pps: demuxer.pps, aac: demuxer.aacConfig, base: base)
+                        note("writer started: video=\(demuxer.sps != nil) audio=\(demuxer.aacConfig != nil) base=\(base)")
                     }
                     let (v, a) = demuxer.takeSamples()
+                    note("segment \(i): video \(v.count) audio \(a.count)")
                     try writer.append(video: v, audio: a)
                     onProgress?(0.92 + 0.07 * Double(i + 1) / Double(segments.count))
                 }
+                note("finishing writer")
                 try await writer.finish()
+                note("writer finished")
             } catch {
                 writer.cancel()
                 throw error
@@ -342,6 +353,7 @@ public final class HLSDownloader {
 
     /// 1本ならそのまま書き出し、映像と音声が別なら合成して mp4 にする
     private func finalize(_ tracks: [URL], to output: URL) async throws {
+        note("finalize \(tracks.count) track file(s)")
         try? FileManager.default.removeItem(at: output)
         let composition = AVMutableComposition()
         var duration = CMTime.zero
@@ -372,5 +384,6 @@ public final class HLSDownloader {
         guard session.status == .completed else {
             throw HLSError.mux(session.error?.localizedDescription ?? "書き出しに失敗しました")
         }
+        note("exported")
     }
 }

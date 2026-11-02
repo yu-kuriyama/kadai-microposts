@@ -2,6 +2,20 @@ import AVFoundation
 import XCTest
 @testable import VideoSaverCore
 
+struct TimeoutError: Error {}
+
+func withTimeout(_ seconds: Double, _ body: @escaping () async throws -> Void) async throws {
+    try await withThrowingTaskGroup(of: Void.self) { group in
+        group.addTask { try await body() }
+        group.addTask {
+            try await Task.sleep(nanoseconds: UInt64(seconds * 1e9))
+            throw TimeoutError()
+        }
+        try await group.next()
+        group.cancelAll()
+    }
+}
+
 final class HLSDownloaderTests: XCTestCase {
     private var fixtures: URL { Bundle.module.url(forResource: "Fixtures", withExtension: nil)! }
 
@@ -20,7 +34,8 @@ final class HLSDownloaderTests: XCTestCase {
                                workDir: dir.appendingPathComponent("work"))
         var lastProgress = 0.0
         dl.onProgress = { lastProgress = $0 }
-        try await dl.download(to: out)
+        dl.onLog = { print("[\(playlist)]", $0) }
+        try await withTimeout(90) { try await dl.download(to: out) }
         print("log:", dl.log)
 
         XCTAssertEqual(lastProgress, 1, accuracy: 0.001, file: file, line: line)
