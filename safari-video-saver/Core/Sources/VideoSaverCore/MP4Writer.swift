@@ -54,36 +54,28 @@ final class MP4Writer {
     /// 1セグメント分のサンプルを時刻順に書き込む
     func append(video: [VideoSample], audio: [AudioSample]) throws {
         guard started, let base else { return }
-        enum Item { case v(VideoSample), a(AudioSample) }
-        var items: [(Int64, Item)] = []
-        if videoInput != nil { items += video.map { ($0.dts, .v($0)) } }
-        if audioInput != nil { items += audio.map { ($0.pts, .a($0)) } }
-        items.sort { $0.0 < $1.0 }
-
-        for (_, item) in items {
-            switch item {
-            case .v(let s):
-                guard let input = videoInput, let fd = videoFormat else { continue }
+        if videoInput != nil, let fd = videoFormat {
+            for s in video {
                 let pts = s.pts - base
                 let dts = s.dts - base
                 guard dts >= 0 || pts >= 0 else { continue }
-                let buffer = try Self.videoBuffer(s, fd: fd, pts: max(0, pts), dts: max(0, dts))
-                try wait(input)
-                if !input.append(buffer) { throw HLSError.mux(writer.error?.localizedDescription ?? "映像の書き込みに失敗") }
-            case .a(let s):
-                guard let input = audioInput, let fd = audioFormat, let cfg = audioConfig else { continue }
-                let pts = s.pts - base
-                guard pts >= 0 else { continue }
-                let buffer = try Self.audioBuffer(s, fd: fd, pts: pts, sampleRate: cfg.sampleRate)
-                try wait(input)
-                if !input.append(buffer) { throw HLSError.mux(writer.error?.localizedDescription ?? "音声の書き込みに失敗") }
+                pendingVideo.append(try Self.videoBuffer(s, fd: fd, pts: max(0, pts), dts: max(0, dts)))
             }
         }
+        if audioInput != nil, let fd = audioFormat, let cfg = audioConfig {
+            for s in audio {
+                let pts = s.pts - base
+                guard pts >= 0 else { continue }
+                pendingAudio.append(try Self.audioBuffer(s, fd: fd, pts: pts, sampleRate: cfg.sampleRate))
+            }
+        }
+        try drain(final: false)
     }
 
     func finish() async throws {
-        videoInput?.markAsFinished()
-        audioInput?.markAsFinished()
+        if started { try drain(final: true) }
+        if videoInput.map({ !finished.contains(ObjectIdentifier($0)) }) == true { videoInput?.markAsFinished() }
+        if audioInput.map({ !finished.contains(ObjectIdentifier($0)) }) == true { audioInput?.markAsFinished() }
         await writer.finishWriting()
         if writer.status != .completed {
             throw HLSError.mux(writer.error?.localizedDescription ?? "書き込みを完了できません")
@@ -94,12 +86,52 @@ final class MP4Writer {
         if started { writer.cancelWriting() }
     }
 
-    private func wait(_ input: AVAssetWriterInput) throws {
-        var tries = 0
-        while !input.isReadyForMoreMediaData {
+    // AVAssetWriter は映像と音声を交互に並べるため、片方のトラックを先に進めすぎると
+    // もう片方のデータが来るまで isReadyForMoreMediaData が false のままになる。
+    // 待っている側のデータがまだ無い時は、次のセグメントが来るまで書き込みを保留する。
+    private var pendingVideo: [CMSampleBuffer] = []
+    private var pendingAudio: [CMSampleBuffer] = []
+    private var finished: Set<ObjectIdentifier> = []
+
+    private func drain(final: Bool) throws {
+        var idle = 0
+        while !pendingVideo.isEmpty || !pendingAudio.isEmpty {
             if writer.status == .failed { throw HLSError.mux(writer.error?.localizedDescription ?? "書き込みエラー") }
-            tries += 1
-            if tries > 20000 { throw HLSError.mux("書き込みが進みません") } // 約40秒
+            var progressed = false
+            for (input, isVideo) in [(videoInput, true), (audioInput, false)] {
+                guard let input else { continue }
+                while input.isReadyForMoreMediaData {
+                    let buffer: CMSampleBuffer
+                    if isVideo {
+                        guard !pendingVideo.isEmpty else { break }
+                        buffer = pendingVideo.removeFirst()
+                    } else {
+                        guard !pendingAudio.isEmpty else { break }
+                        buffer = pendingAudio.removeFirst()
+                    }
+                    if !input.append(buffer) {
+                        throw HLSError.mux(writer.error?.localizedDescription ?? (isVideo ? "映像の書き込みに失敗" : "音声の書き込みに失敗"))
+                    }
+                    progressed = true
+                }
+            }
+            if progressed { idle = 0; continue }
+
+            // 進めなかった：データが尽きた側を待っているなら
+            let starved = [(videoInput, pendingVideo.isEmpty), (audioInput, pendingAudio.isEmpty)]
+                .compactMap { $0.0 != nil && $0.1 ? $0.0 : nil }
+                .filter { !finished.contains(ObjectIdentifier($0)) }
+            if !starved.isEmpty {
+                // 途中なら次のセグメントを待つ。最後ならその側を終わらせて残りを流す
+                guard final else { return }
+                for input in starved {
+                    input.markAsFinished()
+                    finished.insert(ObjectIdentifier(input))
+                }
+                continue
+            }
+            idle += 1
+            if idle > 20000 { throw HLSError.mux("書き込みが進みません") } // 約40秒
             usleep(2000)
         }
     }
@@ -130,7 +162,9 @@ final class MP4Writer {
             mSampleRate: Float64(c.sampleRate), mFormatID: kAudioFormatMPEG4AAC,
             mFormatFlags: UInt32(c.objectType), mBytesPerPacket: 0, mFramesPerPacket: 1024,
             mBytesPerFrame: 0, mChannelsPerFrame: UInt32(max(1, c.channels)), mBitsPerChannel: 0, mReserved: 0)
-        let cookie = c.audioSpecificConfig
+        // AudioSpecificConfig そのままだと esds が壊れて AVFoundation が音声トラックを読めない。
+        // ES_Descriptor で包んだ形（esds の中身）を渡す
+        let cookie = esdsCookie(c.audioSpecificConfig)
         var fd: CMAudioFormatDescription?
         let status = cookie.withUnsafeBytes { ptr in
             CMAudioFormatDescriptionCreate(
@@ -140,6 +174,25 @@ final class MP4Writer {
         }
         guard status == noErr, let fd else { throw HLSError.mux("音声の形式を読み取れません (\(status))") }
         return fd
+    }
+
+    /// ES_Descriptor(0x03) > DecoderConfigDescriptor(0x04) > DecoderSpecificInfo(0x05) = ASC, SLConfig(0x06)
+    static func esdsCookie(_ asc: Data) -> Data {
+        func descriptor(_ tag: UInt8, _ body: Data) -> Data {
+            var d = Data([tag])
+            let n = body.count
+            d.append(contentsOf: [UInt8(0x80 | ((n >> 21) & 0x7F)), UInt8(0x80 | ((n >> 14) & 0x7F)),
+                                  UInt8(0x80 | ((n >> 7) & 0x7F)), UInt8(n & 0x7F)])
+            d.append(body)
+            return d
+        }
+        var decoderConfig = Data([0x40, 0x15]) // MPEG-4 Audio, AudioStream
+        decoderConfig.append(contentsOf: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]) // bufferSize / maxBitrate / avgBitrate
+        decoderConfig.append(descriptor(0x05, asc))
+        var es = Data([0, 0, 0]) // ES_ID, flags
+        es.append(descriptor(0x04, decoderConfig))
+        es.append(descriptor(0x06, Data([0x02])))
+        return descriptor(0x03, es)
     }
 
     private static func blockBuffer(_ data: Data) throws -> CMBlockBuffer {
