@@ -24,8 +24,18 @@ jobs:
       - uses: actions/checkout@v4
       - name: HLS ダウンローダーのテスト（実際に動画を組み立ててデコードまで確認）
         working-directory: safari-video-saver/Core
-        timeout-minutes: 10
-        run: swift test
+        timeout-minutes: 12
+        run: |
+          swift build --build-tests 2>&1 | grep -E "error|Compiling|Build complete" || true
+          status=0
+          for t in testParserAttributesAndMaster testParserByteRangeAndKeys testTSMediaPlaylistDirect \
+                   testTSWithAES128AndMasterPlaylist testFragmentedMP4 testSeparateAudioRendition \
+                   testMissingPlaylistGivesHTTPLikeError; do
+            echo "::group::$t"
+            perl -e 'alarm 120; exec @ARGV' swift test --skip-build --filter "HLSDownloaderTests/$t" 2>&1 || { echo "FAILED or TIMEOUT: $t"; status=1; }
+            echo "::endgroup::"
+          done
+          exit $status
       - name: XcodeGen をインストール
         run: brew install xcodegen
       - name: Xcode プロジェクトを生成

@@ -16,6 +16,11 @@ func withTimeout(_ seconds: Double, _ body: @escaping () async throws -> Void) a
     }
 }
 
+func log(_ items: Any...) {
+    let line = items.map { "\($0)" }.joined(separator: " ") + "\n"
+    FileHandle.standardError.write(line.data(using: .utf8)!)
+}
+
 final class HLSDownloaderTests: XCTestCase {
     private var fixtures: URL { Bundle.module.url(forResource: "Fixtures", withExtension: nil)! }
 
@@ -34,11 +39,12 @@ final class HLSDownloaderTests: XCTestCase {
                                workDir: dir.appendingPathComponent("work"))
         var lastProgress = 0.0
         dl.onProgress = { lastProgress = $0 }
-        dl.onLog = { print("[\(playlist)]", $0) }
+        dl.onLog = { log("[\(playlist)]", $0) }
         try await withTimeout(90) { try await dl.download(to: out) }
-        print("log:", dl.log)
+        log("done:", playlist)
 
         XCTAssertEqual(lastProgress, 1, accuracy: 0.001, file: file, line: line)
+        log("verifying", playlist)
         let asset = AVURLAsset(url: out)
         let duration = try await asset.load(.duration).seconds
         XCTAssertGreaterThan(duration, 5.3, "duration \(duration)", file: file, line: line)
@@ -73,7 +79,7 @@ final class HLSDownloaderTests: XCTestCase {
         XCTAssertNotEqual(reader.status, .failed, "\(String(describing: reader.error))", file: file, line: line)
         XCTAssertGreaterThan(frames, 130, "decoded video frames", file: file, line: line) // 6秒 × 24fps = 144
         if expectAudio { XCTAssertGreaterThan(audioBuffers, 10, file: file, line: line) }
-        print("frames:", frames, "audio buffers:", audioBuffers, "duration:", duration)
+        log("frames:", frames, "audio buffers:", audioBuffers, "duration:", duration)
     }
 
     func testTSWithAES128AndMasterPlaylist() async throws {
